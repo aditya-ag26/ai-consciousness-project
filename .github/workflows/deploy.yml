@@ -12,6 +12,7 @@ on:
 
 env:
   PROJECT_ID: ai-consciousness-rag
+  PROJECT_NUMBER: "630962135302"
   REGION: asia-south1
   REGISTRY: asia-south1-docker.pkg.dev/ai-consciousness-rag/consciousness
   API_SERVICE: consciousness-api
@@ -63,9 +64,18 @@ jobs:
             --region="$REGION" \
             --quiet
 
-      - name: Read the API's URL
+      # Cloud Run answers on two hostnames per service: the current
+      # SERVICE-PROJECTNUMBER.REGION.run.app form, and a legacy
+      # SERVICE-HASH-REGIONCODE.a.run.app form. `status.url` returns only one of
+      # them, so anything derived from it alone breaks for visitors using the
+      # other. Both are therefore computed explicitly.
+      - name: Read the API's URLs
         id: api
-        run: echo "url=$(gcloud run services describe "$API_SERVICE" --region="$REGION" --format='value(status.url)')" >> "$GITHUB_OUTPUT"
+        run: |
+          legacy="$(gcloud run services describe "$API_SERVICE" --region="$REGION" --format='value(status.url)')"
+          canonical="https://${API_SERVICE}-${PROJECT_NUMBER}.${REGION}.run.app"
+          echo "url=$canonical" >> "$GITHUB_OUTPUT"
+          echo "legacy=$legacy" >> "$GITHUB_OUTPUT"
 
       # Vite inlines environment variables at build time, so the API URL has to
       # be known before the frontend image is built.
@@ -85,30 +95,65 @@ jobs:
             --region="$REGION" \
             --quiet
 
-      - name: Read the frontend's URL
+      - name: Read the frontend's URLs
         id: web
-        run: echo "url=$(gcloud run services describe "$WEB_SERVICE" --region="$REGION" --format='value(status.url)')" >> "$GITHUB_OUTPUT"
+        run: |
+          legacy="$(gcloud run services describe "$WEB_SERVICE" --region="$REGION" --format='value(status.url)')"
+          canonical="https://${WEB_SERVICE}-${PROJECT_NUMBER}.${REGION}.run.app"
+          echo "url=$canonical" >> "$GITHUB_OUTPUT"
+          echo "origins=${canonical},${legacy}" >> "$GITHUB_OUTPUT"
 
       # The API refuses cross-origin requests from origins it has not been told
-      # about, so this has to happen once the frontend has a URL.
-      - name: Allow the frontend's origin on the API
+      # about, so this has to happen once the frontend has a URL. Both hostnames
+      # are whitelisted, because a visitor may arrive on either one and CORS
+      # compares the Origin header as an exact string.
+      #
+      # ^;^ changes the delimiter gcloud splits on, so the comma inside the
+      # value is not read as a separator between variables.
+      - name: Allow the frontend's origins on the API
         run: |
           gcloud run services update "$API_SERVICE" \
             --region="$REGION" \
-            --update-env-vars="ALLOWED_ORIGINS=${{ steps.web.outputs.url }}" \
+            --update-env-vars="^;^ALLOWED_ORIGINS=${{ steps.web.outputs.origins }}" \
             --quiet
 
       - name: Smoke test the deployment
         run: |
           set -e
+
           curl -fsS "${{ steps.api.outputs.url }}/health" | tee /dev/stderr | grep -q '"bot_ready":true'
+
           # An out-of-scope question is declined by retrieval without calling the
           # language model, so this verifies the pipeline without spending quota.
           curl -fsS -X POST "${{ steps.api.outputs.url }}/ask" \
             -H 'Content-Type: application/json' \
             -d '{"query":"How do I cook pasta?","length":"short"}' \
             | grep -q '"refused":true'
+
           curl -fsS -o /dev/null "${{ steps.web.outputs.url }}"
+
+          # curl ignores CORS, so the checks above pass even when a browser
+          # would be blocked. Assert the header explicitly for every hostname
+          # the frontend is reachable on, and assert an unknown origin is still
+          # refused - otherwise a wildcard would satisfy this test.
+          for origin in $(echo "${{ steps.web.outputs.origins }}" | tr ',' ' '); do
+            echo "checking CORS for $origin"
+            curl -fsS -o /dev/null -D headers.txt -X POST "${{ steps.api.outputs.url }}/ask" \
+              -H "Origin: $origin" \
+              -H 'Content-Type: application/json' \
+              -d '{"query":"How do I cook pasta?","length":"short"}'
+            grep -qi "access-control-allow-origin" headers.txt \
+              || { echo "::error::no CORS header for $origin - the browser would block this"; exit 1; }
+          done
+
+          curl -fsS -o /dev/null -D evil.txt -X POST "${{ steps.api.outputs.url }}/ask" \
+            -H 'Origin: https://not-our-frontend.example.com' \
+            -H 'Content-Type: application/json' \
+            -d '{"query":"How do I cook pasta?","length":"short"}'
+          if grep -qi "access-control-allow-origin" evil.txt; then
+            echo "::error::an unknown origin was allowed - CORS is too permissive"
+            exit 1
+          fi
 
       - name: Summarise
         run: |

@@ -15,6 +15,7 @@ set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:?set PROJECT_ID to your Google Cloud project id}"
 REGION="${REGION:-asia-south1}"
+PROJECT_NUMBER="${PROJECT_NUMBER:-$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')}"
 REPO="${REPO:-consciousness}"
 API_SERVICE="${API_SERVICE:-consciousness-api}"
 WEB_SERVICE="${WEB_SERVICE:-consciousness-web}"
@@ -24,7 +25,17 @@ TARGET="${1:-all}"
 
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$1"; }
 
+# Cloud Run answers on two hostnames per service: the current
+# SERVICE-PROJECTNUMBER.REGION.run.app form and a legacy
+# SERVICE-HASH-REGIONCODE.a.run.app one. `status.url` returns only one, so the
+# canonical form is constructed and the legacy form read, and both are treated
+# as valid origins. Whitelisting only one silently breaks the app for anyone who
+# happens to use the other.
 service_url() {
+  echo "https://${1}-${PROJECT_NUMBER}.${REGION}.run.app"
+}
+
+service_legacy_url() {
   gcloud run services describe "$1" --region "$REGION" --format 'value(status.url)'
 }
 
@@ -80,15 +91,17 @@ deploy_frontend() {
     --min-instances 0 \
     --max-instances 3
 
-  local web_url
+  local web_url origins
   web_url="$(service_url "$WEB_SERVICE")"
+  origins="${web_url},$(service_legacy_url "$WEB_SERVICE")"
 
-  log "Allowing the browser to call the API from ${web_url}"
-  # The API rejects cross-origin requests from anywhere it is not told about,
-  # so this has to happen after the frontend has a URL.
+  log "Allowing the browser to call the API from ${origins}"
+  # The API rejects cross-origin requests from anywhere it is not told about, so
+  # this has to happen after the frontend has a URL. ^;^ changes the delimiter
+  # gcloud splits on, so the comma inside the value is not read as a separator.
   gcloud run services update "$API_SERVICE" \
     --region "$REGION" \
-    --update-env-vars "ALLOWED_ORIGINS=${web_url}"
+    --update-env-vars "^;^ALLOWED_ORIGINS=${origins}"
 
   log "Frontend deployed at ${web_url}"
 }
