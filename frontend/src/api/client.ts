@@ -37,19 +37,29 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function describeFailure(response: Response): Promise<string> {
-  if (response.status === 404) return 'This conversation expired. Starting a new one.'
-  if (response.status === 503) return 'The assistant is still starting up. Try again shortly.'
+  // The server explains its own failures precisely - an exhausted model quota
+  // reads very differently from a cold start - so prefer its message and fall
+  // back to a status-based one only when there is nothing to show.
   try {
     const body = await response.json()
-    if (typeof body?.detail === 'string') return body.detail
+    if (typeof body?.detail === 'string' && body.detail.length > 0) return body.detail
   } catch {
-    // Fall through to the generic message below.
+    // No JSON body; use the generic messages below.
   }
+
+  if (response.status === 404) return 'This conversation expired. Starting a new one.'
+  if (response.status === 429) return 'Too many requests. Please wait a moment.'
+  if (response.status === 503) return 'The assistant is still starting up. Try again shortly.'
   return `Request failed (${response.status}).`
 }
 
 export const createSession = () =>
-  request<{ session_id: string }>('/sessions', { method: 'POST' }).then((r) => r.session_id)
+  // An explicit body keeps a Content-Length header on the request. Google's
+  // load balancer rejects bodyless POSTs with 411, where a local dev server
+  // accepts them.
+  request<{ session_id: string }>('/sessions', { method: 'POST', body: '{}' }).then(
+    (r) => r.session_id,
+  )
 
 export const fetchMessages = (sessionId: string) =>
   request<{ messages: ChatMessage[] }>(`/sessions/${sessionId}/messages`).then((r) => r.messages)

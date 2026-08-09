@@ -24,6 +24,11 @@ data/01_raw/*.json
 data/01_raw/kaggle_arxiv/
 data/**/*.csv
 
+# --- Personal notes ---
+# Deployment walkthrough kept for personal reference. It records project ids,
+# service URLs and account details, so it stays out of the public repository.
+NOTES-gcp-deployment.md
+
 # --- Editors / OS ---
 .vscode/
 .idea/

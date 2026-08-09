@@ -300,6 +300,34 @@ the cheap ways to abuse or misuse it:
 * **Non-root container** running as an unprivileged user, with secrets injected
   as environment variables rather than baked into the image.
 
+##  Deployment
+
+The application runs on Google Cloud Run as two services: the API and the
+static frontend. Generation happens over the Gemini API, so no model weights are
+hosted and both services scale to zero when idle.
+
+```
+Browser ──► consciousness-web ──► consciousness-api ──► Gemini API
+            (nginx + bundle)      (FastAPI + FAISS)
+```
+
+```bash
+export PROJECT_ID=your-project-id
+./deploy/cloudrun.sh
+```
+
+`deploy/README.md` covers the one-time setup (enabling APIs, Artifact Registry,
+Secret Manager) and the teardown commands. Notable choices:
+
+* **Secrets** come from Secret Manager, not environment variables, so the API
+  key never appears in an image, a config listing, or deployment logs.
+* **A dedicated service account** runs the API with exactly one permission:
+  reading that secret. The default Compute Engine account carries project-wide
+  Editor and is not used.
+* **`--max-instances`** bounds the blast radius of a traffic spike, in cost as
+  well as load.
+* **`--min-instances 0`** trades a cold start for zero idle cost.
+
 ##  Testing
 
 ```bash
@@ -365,6 +393,40 @@ percentages carry more uncertainty than their precision suggests; the threshold
 sweep and the relative comparisons are the more durable signal. Answer quality
 itself is not scored - doing that properly needs either human judgement or a
 model-based judge, both out of scope here.
+
+##  Load Testing
+
+```bash
+python -m src.evaluation.loadtest --url https://your-api-url --concurrency 50 --requests 500
+```
+
+The harness sends out-of-scope questions. Those are declined by the relevance
+guardrail *before* the language model is called, so each request still exercises
+the whole request path - HTTP, middleware, query embedding, FAISS search,
+serialisation - without spending model quota. That is what makes it possible to
+measure real concurrency against a free tier.
+
+### Results
+
+500 requests at 50 concurrent, against the deployed Cloud Run service:
+
+| | Cold (autoscaling) | Warm (steady state) |
+| --- | --- | --- |
+| Throughput | 29.7 req/s | 36.3 req/s |
+| p50 latency | 0.62 s | 1.02 s |
+| p95 latency | 10.05 s | 2.82 s |
+| p99 latency | 11.27 s | 3.01 s |
+| Error rate | 0.00% | 0.00% |
+
+The gap between the two runs is the point. In the first, Cloud Run was scaling
+from one instance to three, and requests that arrived on a booting instance
+waited for it; once warm, p95 improves 3.5x. Tail latency here is an autoscaling
+property, not a throughput limit.
+
+**These numbers cover the retrieval path only.** Generation adds roughly 3-5 s
+through the hosted model and was not load tested, because the free tier allows
+20 requests per day. Quoting the figures above as end-to-end chat latency would
+overstate them.
 
 ##  Contributing
 

@@ -22,6 +22,7 @@ from src.api.security import (
 from src.api.session_store import Message, SessionStore
 from src.config import config
 from src.rag_pipeline.bot import QueryBot, format_source_doc
+from src.rag_pipeline.llm_provider import LLMUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,19 @@ def _require_session(session_id: str) -> None:
         raise HTTPException(status_code=404, detail="Session not found.")
 
 
+def _ask(active_bot: QueryBot, **kwargs) -> dict:
+    """
+    Runs a query, translating a generation outage into a 503.
+
+    The distinction matters to a caller: 503 means the service is healthy but
+    its upstream model is not, and the same request may succeed later.
+    """
+    try:
+        return active_bot.ask(**kwargs)
+    except LLMUnavailableError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
 # --- API Endpoints ---
 
 @app.get("/health", response_model=HealthResponse)
@@ -149,8 +163,10 @@ def health() -> HealthResponse:
 def ask_question(request: AskRequest) -> AskResponse:
     """Answers a single question without any conversation history."""
     active_bot = _require_bot()
-    result = active_bot.ask(
-        query=request.query, num_predict_tokens=_resolve_length(request.length)
+    result = _ask(
+        active_bot,
+        query=request.query,
+        num_predict_tokens=_resolve_length(request.length),
     )
     return AskResponse(
         answer=result["result"],
@@ -189,8 +205,11 @@ def post_message(session_id: str, request: MessageRequest) -> AskResponse:
     # Read history before storing the new message so the current question is
     # not duplicated into its own context.
     history = sessions.history_pairs(session_id)
-    result = active_bot.ask(
-        query=request.message, num_predict_tokens=num_tokens, chat_history=history
+    result = _ask(
+        active_bot,
+        query=request.message,
+        num_predict_tokens=num_tokens,
+        chat_history=history,
     )
     sources = _format_sources(result["source_documents"])
 
