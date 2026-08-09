@@ -11,16 +11,15 @@ This script orchestrates the following steps:
 """
 import logging
 from pathlib import Path
-from typing import Dict, List
 
 import pandas as pd
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
 
-from src.config import config # Import our validated config object
+from src.config import config  # Import our validated config object
+from src.rag_pipeline.embeddings import build_embeddings
 
 # Set up professional logging
 logging.basicConfig(
@@ -29,7 +28,7 @@ logging.basicConfig(
 )
 
 
-def load_from_parquet(file_path: Path) -> List[Document]:
+def load_from_parquet(file_path: Path) -> list[Document]:
     """Loads documents from a Parquet file."""
     if not file_path.exists():
         logging.warning(f"Parquet file not found at: {file_path}. Skipping.")
@@ -54,7 +53,7 @@ def load_from_parquet(file_path: Path) -> List[Document]:
     return docs
 
 
-def load_from_text_files(source_paths: List[Path]) -> List[Document]:
+def load_from_text_files(source_paths: list[Path]) -> list[Document]:
     """Loads documents from a list of .txt files and directories."""
     all_docs = []
     
@@ -113,7 +112,9 @@ def main() -> None:
 
     # 3. Initialize Embeddings (SRP)
     logging.info(f"Initializing embedding model: {pipeline_config.embedding_model}")
-    embeddings = HuggingFaceEmbeddings(model_name=pipeline_config.embedding_model)
+    embeddings = build_embeddings(
+        pipeline_config.embedding_model, config.rag_application.embedding_backend
+    )
 
     # 4. Build or Update Vector Store (SRP)
     index_path = pipeline_config.faiss_index_path

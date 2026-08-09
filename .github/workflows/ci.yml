@@ -1,0 +1,57 @@
+name: CI
+
+# Runs on every push and pull request. Deployment lives in deploy.yml and only
+# runs on main, so a broken branch can never reach Cloud Run.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Lint and test the backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt ruff
+
+      - name: Lint
+        run: ruff check src/ tests/
+
+      - name: Test
+        # The suite includes a check that the ONNX and PyTorch embedding
+        # backends agree, which is what allows the container to ship without
+        # PyTorch. That test downloads both models, hence the generous timeout.
+        run: pytest -q
+        timeout-minutes: 20
+
+  frontend:
+    name: Build the frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and build
+        run: npm run build

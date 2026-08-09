@@ -1,8 +1,43 @@
 [project]
 name = "ai_consciousness_project"
-version = "0.1.0"
+version = "0.2.0"
 description = "A RAG-based assistant for AI consciousness research."
-authors = [{ name = "Siddhant Sharma"}]
+authors = [
+    { name = "Aditya Agarwal" },
+    { name = "Siddhant Sharma" },
+]
+requires-python = ">=3.10"
 
 [tool.setuptools]
 packages = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "SIM", "C4", "LOG"]
+ignore = [
+    # Long lines are almost always explanatory comments or prompt text, where
+    # wrapping hurts readability more than it helps.
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The data scripts are standalone entry points that configure and use the root
+# logger deliberately, so their output reads as a single pipeline transcript.
+"src/data/*.py" = ["LOG015"]
+
+[tool.pytest.ini_options]
+# Lets `pytest` resolve the `src` package from the repository root, so the
+# suite runs without callers having to set PYTHONPATH themselves.
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "slow: tests that load a model backend; deselect with -m 'not slow'",
+]
+filterwarnings = [
+    # Starlette's TestClient warns about httpx; the suggested replacement is not
+    # yet compatible with the pinned FastAPI.
+    "ignore::DeprecationWarning:starlette.testclient",
+]

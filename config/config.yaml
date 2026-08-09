@@ -68,17 +68,67 @@ rag_application:
 
   # Models
   embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+
+  # How to execute the embedding model. "onnx" and "torch" run the same weights
+  # and produce identical vectors, so either can read the same FAISS index;
+  # "onnx" avoids a ~700MB PyTorch dependency in the container. Override with
+  # EMBEDDING_BACKEND.
+  embedding_backend: "onnx"
+
+  # The language model is a swappable component. "ollama" runs entirely on this
+  # machine with no API key; "gemini" calls a hosted model and needs almost no
+  # memory, which is what makes free-tier container hosting practical.
+  # Override at runtime with LLM_PROVIDER without editing this file.
   llm:
-    model_name: "mistral"
-    base_url: "http://localhost:11434"
+    provider: "ollama"
+    ollama:
+      model_name: "qwen2.5:0.5b-instruct"
+      base_url: "http://localhost:11434"
+    gemini:
+      # Alias that tracks the current Flash model. Prefer it over a pinned
+      # version like "gemini-2.0-flash": pinned names are quota-limited or
+      # unavailable on some API keys, while the alias resolves to whichever
+      # Flash model the key can actually reach.
+      model_name: "gemini-flash-latest"
+
+  # Retrieval and guardrail parameters
+  retrieval_k: 4
+
+  # Maximum FAISS L2 distance for a query to count as "in scope".
+  #
+  # Tuned by `python -m src.evaluation`, which sweeps this value over a labelled
+  # set of 56 cases. 0.95 maximises F1 (0.923); the earlier 1.15 scored 0.842 by
+  # admitting questions that merely borrow the corpus's vocabulary.
+  #
+  # Some overlap is irreducible: the corpus contains neuroscience and AI papers,
+  # so "what is emotional intelligence" (0.841) legitimately lands nearer than
+  # the on-topic "what did Hameroff propose about microtubules" (0.926). The
+  # prompt's own refusal instruction is the second line of defence for those.
+  # Re-run the evaluation after changing the corpus or the embedding model.
+  relevance_threshold: 0.95
+
+  # Number of prior conversation turns folded into the prompt.
+  history_window: 3
+
+  # Shown verbatim when the relevance gate rejects a query, so the app never
+  # invents an answer for something the knowledge base does not cover.
+  out_of_scope_message: >
+    That question falls outside the scope of this knowledge base. I can only
+    answer using the consciousness research papers and expert transcripts I was
+    built from - topics like the hard problem of consciousness, qualia,
+    sentience, self-awareness, and theories of mind. Try rephrasing your
+    question around one of those.
 
   # RAG Chain parameters
   prompt_template: >
     Use the following pieces of context to answer the user's question.
-    If you don't know the answer, or if the question is not related to 
-    AI consciousness or consciousness, just say that you don't know or 
+    If you don't know the answer, or if the question is not related to
+    AI consciousness or consciousness, just say that you don't know or
     that the question is outside the scope of this knowledge base.
     Do not try to make up an answer.
+
+    Conversation so far (for context, may be empty):
+    {chat_history}
 
     Context:
     {context}
@@ -86,7 +136,35 @@ rag_application:
     Question: {question}
 
     Answer:
-  
+
+  # Rewrites context-dependent follow-ups ("why?", "tell me more") into
+  # standalone questions so retrieval and the relevance gate can score them.
+  condense_prompt_template: >
+    Given the conversation below, rewrite the follow-up question as a single
+    standalone question. Resolve pronouns and references using the conversation.
+    If the follow-up already makes sense on its own, repeat it unchanged.
+    Output ONLY the rewritten question, nothing else.
+
+    Conversation:
+    {chat_history}
+
+    Follow-up question: {question}
+
+    Standalone question:
+
+  # Token budget for the condensation rewrite (short by design).
+  condense_num_predict: 40
+
+  # Small models imitate the transcript format in the prompt and keep writing
+  # invented "User:/Assistant:" turns after their answer. These cut generation
+  # at the first sign of a fabricated turn.
+  stop_sequences:
+    - "\nUser:"
+    - "\nAssistant:"
+    - "\nResponse:"
+    - "\nQuestion:"
+    - "\nContext:"
+
   # User preference mapping
   answer_length_map:
     short: 100

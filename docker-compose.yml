@@ -1,0 +1,56 @@
+# Local end-to-end stack. Mirrors the deployed topology: a static frontend and
+# an API, talking over HTTP.
+#
+#   docker compose up --build                    # hosted model (needs GOOGLE_API_KEY)
+#   docker compose --profile local-llm up --build  # adds a local Ollama service
+#
+# The local-llm profile keeps the fully offline path runnable without changing
+# any image, matching the pluggable provider in src/rag_pipeline/llm_provider.py.
+
+services:
+  api:
+    build:
+      context: .
+    environment:
+      PORT: 8080
+      ALLOWED_ORIGINS: http://localhost:5173
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      # Reaches the ollama service below rather than the host loopback.
+      OLLAMA_BASE_URL: http://ollama:11434
+      ENABLE_DOCS: ${ENABLE_DOCS:-true}
+    ports:
+      - "8000:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 15s
+      timeout: 5s
+      # The embedding model loads before the first check can pass.
+      start_period: 90s
+      retries: 5
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked into the bundle at build time, so it must be the URL the
+        # browser will use, not an internal service name.
+        VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - "5173:8080"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-llm"]
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+
+volumes:
+  ollama-models:

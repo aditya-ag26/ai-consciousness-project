@@ -8,11 +8,12 @@ as a compressed Parquet file.
 """
 import json
 import logging
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional
 
 import pandas as pd
-from src.config import config # Import our validated config object
+
+from src.config import config  # Import our validated config object
 
 # Set up professional logging
 logging.basicConfig(
@@ -21,7 +22,7 @@ logging.basicConfig(
 )
 
 
-def stream_papers(jsonl_path: Path) -> Iterator[Dict]:
+def stream_papers(jsonl_path: Path) -> Iterator[dict]:
     """
     Lazily loads papers from a JSON Lines file using a generator.
 
@@ -32,7 +33,7 @@ def stream_papers(jsonl_path: Path) -> Iterator[Dict]:
         A dictionary representing a single paper's metadata.
     """
     logging.info(f"Streaming papers from {jsonl_path}...")
-    with open(jsonl_path, "r", encoding="utf-8") as f:
+    with open(jsonl_path, encoding="utf-8") as f:
         for i, line in enumerate(f):
             try:
                 yield json.loads(line.strip())
@@ -41,7 +42,7 @@ def stream_papers(jsonl_path: Path) -> Iterator[Dict]:
                 continue
 
 
-def paper_matches_criteria(paper: Dict, keywords: List[str], categories: List[str]) -> bool:
+def paper_matches_criteria(paper: dict, keywords: list[str], categories: list[str]) -> bool:
     """
     Checks if a paper matches keyword and category criteria.
 
@@ -65,7 +66,7 @@ def paper_matches_criteria(paper: Dict, keywords: List[str], categories: List[st
     return keyword_match and category_match
 
 
-def transform_paper(paper: Dict, max_title_len: int, max_abstract_len: int) -> Dict:
+def transform_paper(paper: dict, max_title_len: int, max_abstract_len: int) -> dict:
     """
     Transforms a raw paper dictionary into a structured format.
 
