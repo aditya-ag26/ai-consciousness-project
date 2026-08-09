@@ -1,5 +1,31 @@
-data/
+# --- Secrets ---
 .env
-chatbot.log
+.env.*
+!.env.example
+
+# --- Python ---
 __pycache__/
+*.py[cod]
 venv/
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# --- Logs ---
+chatbot.log
+*.log
+
+# --- Data ---
+# The small derived artifacts the application needs at runtime (the FAISS index,
+# the filtered metadata, and the transcripts) are committed, so the repo can be
+# built and deployed straight from a clone. Bulk raw inputs are not: the arXiv
+# snapshot is several gigabytes and is fetched separately when rebuilding.
+data/01_raw/*.json
+data/01_raw/kaggle_arxiv/
+data/**/*.csv
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

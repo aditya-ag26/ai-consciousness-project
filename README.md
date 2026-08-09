@@ -45,8 +45,13 @@ The system automatically processes academic papers from arXiv and local expert t
 * **Config-Driven Pipelines**: All data processing and embedding logic is controlled via a central `config.yaml` file, not hardcoded scripts.
 * **Multi-Source Knowledge Base**: Ingests data from both structured sources (arXiv papers) and unstructured text (expert transcripts).
 * **Object-Oriented & Modular**: Core logic is encapsulated in a `QueryBot` class with separated concerns for maintainability and testing.
-* **Local First**: The entire RAG pipeline runs locally using Ollama, ensuring privacy and control.
+* **Pluggable LLM Backend**: The language model is a swappable component. The same pipeline runs against a **local Ollama model** (no API key, fully offline, private) or a **hosted Gemini model** (near-zero memory, suitable for free-tier hosting) selected by a single setting. See [Choosing a language model](#-choosing-a-language-model).
 * **Source Attribution**: All generated answers are accompanied by citations from the source documents.
+* **Relevance Guardrail**: Questions whose closest document exceeds a calibrated distance threshold are declined instead of answered from the model's own knowledge.
+* **Session Memory**: Each chat session keeps a rolling history, and context-dependent follow-ups ("why?", "tell me more") are rewritten into standalone questions before retrieval.
+* **Pluggable Embedding Backend**: The same MiniLM weights run on either PyTorch or ONNX Runtime, producing identical vectors. The ONNX path drops ~2 GB from the container and cuts cold start from ~110 s to ~19 s.
+* **Web Interface**: A React chat frontend that opens on a hero prompt and expands into a cited conversation.
+* **Containerised**: Two small images and a Compose file that mirrors the deployed topology.
 
 ###  Built With
 
@@ -54,9 +59,27 @@ The system automatically processes academic papers from arXiv and local expert t
 * LangChain
 * SentenceTransformers
 * FAISS-CPU
-* Ollama (Mistral)
+* Ollama
+* FastAPI
 * Pydantic
 * Pandas
+* React + Vite + TypeScript
+
+###  Project Structure
+
+```
+config/            config.yaml (all tunable behaviour) and the evaluation set
+data/              transcripts, filtered metadata, and the prebuilt FAISS index
+src/
+  api/             FastAPI app, session store, rate limiting and headers
+  data/            pipelines that filter papers and build the vector store
+  rag_pipeline/    QueryBot, plus pluggable LLM and embedding backends
+  evaluation/      labelled-set harness and metrics
+frontend/          React + Vite chat interface, served by nginx in its image
+tests/             unit tests mirroring the src/ layout
+Dockerfile         backend image
+docker-compose.yml local stack: API, frontend, optional Ollama
+```
 
 ##  Getting Started
 
@@ -65,6 +88,7 @@ Follow these steps to get a local copy up and running.
 ###  Prerequisites
 
 * **Python >= 3.10**
+* **Node.js >= 20** (for the web frontend)
 * **Ollama**: You must have Ollama installed and running. [Download here](https://ollama.com).
 
 ###  Installation
@@ -94,11 +118,32 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Download the LLM:
-Pull the Mistral model that the chatbot will use.
+Configure the environment:
 
 ```bash
-ollama pull mistral
+cp .env.example .env
+```
+
+Every setting has a working default, so the app runs without edits. See
+[Choosing a language model](#-choosing-a-language-model) for the one decision
+worth making up front.
+
+Download the LLM (only needed for the local `ollama` backend):
+The default is a small instruct model that runs comfortably on modest hardware;
+swap `rag_application.llm.ollama.model_name` in `config/config.yaml` for a
+larger one (e.g. `mistral`) if you have the memory.
+
+```bash
+ollama pull qwen2.5:0.5b-instruct
+```
+
+Install the frontend dependencies:
+
+```bash
+cd frontend
+npm install
+cp .env.example .env
+cd ..
 ```
 
 ##  Usage
@@ -117,23 +162,209 @@ Run the unified embedding pipeline. This single command will process all configu
 python -m src.data.build_vector_store
 ```
 
-### 3. Run the Chatbot
+### 3. Run the Web Application
 
-The chatbot requires two separate terminals to run: one for the Ollama server (the "engine") and one for the CLI application (the "interface").
+The full application runs as three processes: the Ollama server (the "engine"),
+the API, and the web frontend. With `LLM_PROVIDER=gemini` the first is not
+needed, since generation happens over the network.
 
-**Terminal 1:** Start the Ollama Server
+**Terminal 1:** Start the Ollama server (local backend only)
 
 ```bash
-ollama run mistral
+ollama serve
 ```
 
-**Terminal 2:** Start the Chatbot CLI
+**Terminal 2:** Start the API
+
+```bash
+uvicorn src.api.main:app --reload
+```
+
+**Terminal 3:** Start the frontend
+
+```bash
+cd frontend
+npm run dev
+```
+
+Open the URL that Vite prints (by default `http://localhost:5173`). The first
+request after startup is slow while the embedding model loads.
+
+### 4. (Alternative) Run the Chatbot CLI
+
+The CLI is still available and shares the same session behaviour:
 
 ```bash
 python -m src.rag_pipeline.main_cli
 ```
 
-The application will start, ask you to choose an answer length, and then you can begin asking questions.
+##  Choosing a Language Model
+
+Retrieval, the relevance guardrail, and prompt construction are identical no
+matter which model generates the text, so the two backends are interchangeable.
+Adding a third means implementing one `generate` method in
+`src/rag_pipeline/llm_provider.py`.
+
+| | `ollama` (local) | `gemini` (hosted) |
+| --- | --- | --- |
+| API key | Not needed | `GOOGLE_API_KEY` required |
+| Privacy | Nothing leaves the machine | Prompts sent to Google |
+| Memory | ~1 GB+ free RAM | Negligible |
+| Typical latency | ~10-15 s on CPU | ~5 s |
+| Best for | Development, offline work, privacy | Free-tier container hosting |
+
+Select a backend in `config/config.yaml` under `rag_application.llm.provider`,
+or override it per environment without editing the file:
+
+```bash
+# Run entirely locally (default)
+LLM_PROVIDER=ollama
+
+# Use the hosted model
+LLM_PROVIDER=gemini
+GOOGLE_API_KEY=your-key-here
+```
+
+Create a Gemini key at [Google AI Studio](https://aistudio.google.com/apikey).
+The API has its own free tier, separate from any consumer Gemini subscription.
+If a pinned model name returns a quota error, prefer the `gemini-flash-latest`
+alias, which resolves to whichever Flash model your key can reach.
+
+##  Choosing an Embedding Backend
+
+Retrieval needs a model to turn a question into a vector. This is separate from
+the language model that writes the answer, and it stays local even when
+generation is hosted.
+
+Both backends execute the same `all-MiniLM-L6-v2` weights and return identical,
+unit-normalised vectors, so a FAISS index built with one is readable by the
+other (`tests/rag_pipeline/test_embeddings.py` pins this).
+
+| | `onnx` (default) | `torch` |
+| --- | --- | --- |
+| Runtime | ONNX Runtime via fastembed | PyTorch via sentence-transformers |
+| Container image | ~1.1 GB | ~2.5 GB |
+| Cold start | ~19 s | ~110 s |
+| Best for | Serving, especially scale-to-zero hosting | Local development, rebuilding the index |
+
+Set `rag_application.embedding_backend` in `config/config.yaml`, or override with
+`EMBEDDING_BACKEND`. Only the ONNX backend is installed in the container image.
+
+> On Windows, running the ONNX backend inside the full development environment
+> can trip an OpenMP conflict, because PyTorch and ONNX Runtime each ship their
+> own copy. Set `KMP_DUPLICATE_LIB_OK=TRUE` if you hit it. The container is
+> unaffected: PyTorch is not installed there.
+
+##  Running with Docker
+
+```bash
+cp .env.example .env     # then set GOOGLE_API_KEY if using the hosted model
+docker compose up --build
+```
+
+The frontend is served at `http://localhost:5173` and the API at
+`http://localhost:8000`. To run the language model locally as well:
+
+```bash
+docker compose --profile local-llm up --build
+docker compose exec ollama ollama pull qwen2.5:0.5b-instruct
+```
+
+##  API
+
+| Method   | Endpoint                          | Purpose                                        |
+| -------- | --------------------------------- | ---------------------------------------------- |
+| `GET`    | `/health`                         | Liveness plus whether the model finished loading |
+| `POST`   | `/ask`                            | One-off question with no conversation history   |
+| `POST`   | `/sessions`                       | Start a chat session                            |
+| `GET`    | `/sessions/{id}/messages`         | Replay a session's conversation                 |
+| `POST`   | `/sessions/{id}/messages`         | Ask within a session, using its history         |
+| `DELETE` | `/sessions/{id}`                  | End a session and discard its history           |
+
+Interactive API docs are served at `/docs`.
+
+Interactive API docs are served at `/docs` unless `ENABLE_DOCS=false`.
+
+### Hardening
+
+None of this is authentication - the API is public by design - but it removes
+the cheap ways to abuse or misuse it:
+
+* **CORS whitelist** via `ALLOWED_ORIGINS`, never a wildcard, with credentials off.
+* **Per-IP rate limiting** (`RATE_LIMIT_REQUESTS` per `RATE_LIMIT_WINDOW_SECONDS`).
+  Each answer costs seconds of compute or metered API quota, so an unthrottled
+  endpoint is a practical denial-of-service risk.
+* **Input caps** on every request field, so a huge body cannot reach the model.
+* **Security headers** on both the API and the frontend (`nosniff`, `DENY`
+  framing, no referrer, restrictive permissions policy).
+* **Non-root container** running as an unprivileged user, with secrets injected
+  as environment variables rather than baked into the image.
+
+##  Testing
+
+```bash
+pytest
+```
+
+##  Evaluation
+
+The pipeline is measured against a labelled set of 56 cases in
+`config/eval_dataset.yaml`, covering on-topic questions with expected sources,
+plainly off-topic questions, context-dependent follow-ups, and deliberately
+adversarial near-misses that borrow the corpus's vocabulary.
+
+```bash
+python -m src.evaluation                 # evaluate the configured provider
+python -m src.evaluation --json out.json # also write a machine-readable report
+```
+
+Retrieval and guardrail scoring depend only on the embedding model, so those
+numbers are provider-independent and cost nothing to reproduce. The language
+model is used only to condense follow-ups and to time generation.
+
+### Results
+
+| Metric | Result |
+| --- | --- |
+| Retrieval hit rate @4 | 100% (20/20) |
+| Mean reciprocal rank | 0.938 |
+| Guardrail accuracy | 92.9% |
+| Guardrail precision / recall | 92.3% / 92.3% |
+| Guardrail F1 | 0.923 |
+| Latency (local `qwen2.5:0.5b`, p50) | ~3.7 s |
+| Latency (hosted `gemini-flash-latest`) | ~3-5 s |
+
+Breakdown: 20/20 on-topic answered, 18/18 off-topic declined, 8/10 adversarial
+near-misses declined, 2/2 off-topic mid-conversation declined, 4/6
+context-dependent follow-ups resolved.
+
+### What the numbers show
+
+**The relevance threshold is tuned, not guessed.** The harness sweeps it and
+reports F1 at each value. `0.95` is the measured optimum (F1 0.923); the
+originally chosen `1.15` scored 0.842 because it admitted questions that merely
+sound related.
+
+**Some overlap is irreducible.** The corpus contains neuroscience and AI papers,
+so "what is emotional intelligence in the workplace" (distance 0.841) lands
+nearer than the genuinely on-topic "what did Hameroff propose about
+microtubules" (0.926). No single cutoff separates those, which is why the prompt
+keeps its own refusal instruction as a second line of defence. Comparing
+aggregation strategies confirmed that the closest-document distance separates
+better (97.9% achievable accuracy) than the mean of the top 4 (95.8%).
+
+**Follow-up resolution depends on the model.** The 2 missed follow-ups are
+condensation failures: rewriting "why is it called that?" into a standalone
+question is a genuine reasoning task, and `qwen2.5:0.5b` is inconsistent at it.
+The same cases resolve reliably on the hosted model.
+
+### Limitations
+
+The labelled set is small (56 cases) and written by hand, so the absolute
+percentages carry more uncertainty than their precision suggests; the threshold
+sweep and the relative comparisons are the more durable signal. Answer quality
+itself is not scored - doing that properly needs either human judgement or a
+model-based judge, both out of scope here.
 
 ##  Contributing
 

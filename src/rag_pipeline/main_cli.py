@@ -9,6 +9,7 @@ import time
 from src.config import config
 from src.rag_pipeline.bot import QueryBot, format_response
 
+
 def setup_logging():
     """Configures the root logger for the application."""
     log_path = config.rag_application.log_path
@@ -44,6 +45,7 @@ def main():
     logger.info(f"User set answer length to '{choice}' ({num_tokens} tokens).")
     
     print("\nAsk your questions (Type 'exit' to quit):\n")
+    history: list[tuple[str, str]] = []
     while True:
         query = input("You: ").strip()
         if query.lower() in {"exit", "quit"}:
@@ -52,11 +54,14 @@ def main():
             continue
 
         start_time = time.time()
-        result = bot.ask(query, num_predict_tokens=num_tokens)
+        result = bot.ask(query, num_predict_tokens=num_tokens, chat_history=history)
         end_time = time.time()
-        
+
         logger.info(f"Query processed in {end_time - start_time:.2f} seconds.")
-        
+
+        history.append(("user", query))
+        history.append(("assistant", result["result"]))
+
         formatted_output = format_response(result)
         print(formatted_output)
         print("\n" + "-" * 50)

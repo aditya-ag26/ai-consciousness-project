@@ -1,0 +1,31 @@
+# Runtime dependencies for serving the API.
+#
+# requirements.txt is the full development set: it also covers the data
+# pipeline (pandas, pyarrow, arxiv) and plotting, none of which the running
+# service needs. Keeping this list minimal keeps the container image small,
+# which is what cold-start time and free-tier hosting are sensitive to.
+#
+# Transitive dependencies are resolved by pip rather than pinned here; the
+# image is reproducible because the base image and these versions are fixed.
+
+fastapi==0.141.1
+uvicorn==0.52.1
+python-dotenv==1.1.1
+PyYAML==6.0.2
+pydantic==2.11.7
+
+langchain==0.3.26
+langchain-community==0.3.27
+langchain-core==0.3.86
+
+# Both model backends ship in the image so LLM_PROVIDER can be switched by
+# configuration alone, without rebuilding.
+langchain-google-genai==2.1.12
+langchain-ollama==0.3.3
+
+# Embeddings run on ONNX Runtime rather than PyTorch. Identical vectors, but it
+# avoids ~2GB of image and cuts cold start from ~110s to a few seconds. The
+# PyTorch backend (sentence-transformers, langchain-huggingface) stays in
+# requirements.txt for development and for rebuilding the index.
+fastembed==0.8.0
+faiss-cpu==1.11.0
