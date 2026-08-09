@@ -28,6 +28,7 @@ data/**/*.csv
 # Deployment walkthrough kept for personal reference. It records project ids,
 # service URLs and account details, so it stays out of the public repository.
 NOTES-gcp-deployment.md
+NOTES-apis-and-http.md
 
 # --- Editors / OS ---
 .vscode/
