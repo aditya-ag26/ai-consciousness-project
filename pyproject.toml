@@ -2,7 +2,10 @@
 name = "ai_consciousness_project"
 version = "0.2.0"
 description = "A RAG-based assistant for AI consciousness research."
-authors = [{ name = "Siddhant Sharma" }]
+authors = [
+    { name = "Aditya Agarwal" },
+    { name = "Siddhant Sharma" },
+]
 requires-python = ">=3.10"
 
 [tool.setuptools]

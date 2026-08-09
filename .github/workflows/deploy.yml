@@ -1,0 +1,124 @@
+name: Deploy to Cloud Run
+
+# Only main deploys, and only after CI has passed on that same commit, so a
+# failing test cannot reach production. workflow_dispatch allows a manual
+# redeploy without pushing a commit.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ai-consciousness-rag
+  REGION: asia-south1
+  REGISTRY: asia-south1-docker.pkg.dev/ai-consciousness-rag/consciousness
+  API_SERVICE: consciousness-api
+  WEB_SERVICE: consciousness-web
+
+jobs:
+  deploy:
+    # Skip when CI failed. A manual run has no triggering workflow, so allow that too.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # Required for Workload Identity Federation: it lets the job mint the
+      # OIDC token that Google exchanges for short-lived credentials. No
+      # service-account key is stored anywhere.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/630962135302/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: github-deployer@ai-consciousness-rag.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Let Docker push to Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      # Tag with the commit SHA as well as latest, so every deployed revision
+      # can be traced back to the exact source it was built from.
+      - name: Build and push the API image
+        run: |
+          docker build --platform linux/amd64 \
+            -t "$REGISTRY/api:${{ github.sha }}" \
+            -t "$REGISTRY/api:latest" .
+          docker push "$REGISTRY/api:${{ github.sha }}"
+          docker push "$REGISTRY/api:latest"
+
+      - name: Deploy the API
+        run: |
+          gcloud run deploy "$API_SERVICE" \
+            --image="$REGISTRY/api:${{ github.sha }}" \
+            --region="$REGION" \
+            --quiet
+
+      - name: Read the API's URL
+        id: api
+        run: echo "url=$(gcloud run services describe "$API_SERVICE" --region="$REGION" --format='value(status.url)')" >> "$GITHUB_OUTPUT"
+
+      # Vite inlines environment variables at build time, so the API URL has to
+      # be known before the frontend image is built.
+      - name: Build and push the frontend image
+        run: |
+          docker build --platform linux/amd64 \
+            --build-arg "VITE_API_BASE_URL=${{ steps.api.outputs.url }}" \
+            -t "$REGISTRY/web:${{ github.sha }}" \
+            -t "$REGISTRY/web:latest" ./frontend
+          docker push "$REGISTRY/web:${{ github.sha }}"
+          docker push "$REGISTRY/web:latest"
+
+      - name: Deploy the frontend
+        run: |
+          gcloud run deploy "$WEB_SERVICE" \
+            --image="$REGISTRY/web:${{ github.sha }}" \
+            --region="$REGION" \
+            --quiet
+
+      - name: Read the frontend's URL
+        id: web
+        run: echo "url=$(gcloud run services describe "$WEB_SERVICE" --region="$REGION" --format='value(status.url)')" >> "$GITHUB_OUTPUT"
+
+      # The API refuses cross-origin requests from origins it has not been told
+      # about, so this has to happen once the frontend has a URL.
+      - name: Allow the frontend's origin on the API
+        run: |
+          gcloud run services update "$API_SERVICE" \
+            --region="$REGION" \
+            --update-env-vars="ALLOWED_ORIGINS=${{ steps.web.outputs.url }}" \
+            --quiet
+
+      - name: Smoke test the deployment
+        run: |
+          set -e
+          curl -fsS "${{ steps.api.outputs.url }}/health" | tee /dev/stderr | grep -q '"bot_ready":true'
+          # An out-of-scope question is declined by retrieval without calling the
+          # language model, so this verifies the pipeline without spending quota.
+          curl -fsS -X POST "${{ steps.api.outputs.url }}/ask" \
+            -H 'Content-Type: application/json' \
+            -d '{"query":"How do I cook pasta?","length":"short"}' \
+            | grep -q '"refused":true'
+          curl -fsS -o /dev/null "${{ steps.web.outputs.url }}"
+
+      - name: Summarise
+        run: |
+          {
+            echo "### Deployed"
+            echo ""
+            echo "| Service | URL |"
+            echo "| --- | --- |"
+            echo "| Frontend | ${{ steps.web.outputs.url }} |"
+            echo "| API | ${{ steps.api.outputs.url }} |"
+            echo ""
+            echo "Image tag: \`${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

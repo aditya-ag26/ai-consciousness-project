@@ -5,9 +5,9 @@ A Retrieval-Augmented Generation (RAG) assistant for exploring, filtering, and c
 <br />
 <a href="#-about-the-project"><strong>Explore the Project »</strong></a>
 <br /><br />
-<a href="https://github.com/sidsharmaa/ai-consciousness-project-major/issues/new?labels=bug&template=bug-report---.md">Report Bug</a>
+<a href="https://github.com/aditya-ag26/ai-consciousness-project/issues/new?labels=bug&template=bug-report---.md">Report Bug</a>
 ·
-<a href="https://github.com/sidsharmaa/ai-consciousness-project-major/issues/new?labels=enhancement&template=feature-request---.md">Request Feature</a>
+<a href="https://github.com/aditya-ag26/ai-consciousness-project/issues/new?labels=enhancement&template=feature-request---.md">Request Feature</a>
 </p>
 </div>
 
@@ -29,7 +29,7 @@ A Retrieval-Augmented Generation (RAG) assistant for exploring, filtering, and c
 <li><a href="#-usage">Usage</a></li>
 <li><a href="#-contributing">Contributing</a></li>
 <li><a href="#-license">License</a></li>
-<li><a href="#-contact">Contact</a></li>
+<li><a href="#-authors">Authors</a></li>
 <li><a href="#-acknowledgments">Acknowledgments</a></li>
 </ol>
 </details>
@@ -96,8 +96,8 @@ Follow these steps to get a local copy up and running.
 Clone the repository:
 
 ```bash
-git clone https://github.com/sidsharmaa/ai-consciousness-project-major.git
-cd ai-consciousness-project-major
+git clone https://github.com/aditya-ag26/ai-consciousness-project.git
+cd ai-consciousness-project
 ```
 
 Create and activate a virtual environment:
@@ -444,11 +444,13 @@ If you have a suggestion that would make this better, please fork the repo and c
 
 Distributed under the MIT License. See `LICENSE.txt` for more information.
 
-##  Contact
+##  Authors
+
+**Aditya Agarwal** — [@aditya-ag26](https://github.com/aditya-ag26)
 
 **Siddhant Sharma** — [@sidsharmaa](https://github.com/sidsharmaa)
 
-Project Link: [https://github.com/sidsharmaa/ai-consciousness-project-major](https://github.com/sidsharmaa/ai-consciousness-project-major)
+Project Link: [https://github.com/aditya-ag26/ai-consciousness-project](https://github.com/aditya-ag26/ai-consciousness-project)
 
 ##  Acknowledgments
 
