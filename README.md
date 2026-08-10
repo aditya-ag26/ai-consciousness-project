@@ -14,7 +14,7 @@ sources and a calibrated refusal policy for out-of-scope questions.
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
 ![Cloud Run](https://img.shields.io/badge/Cloud_Run-4285F4?logo=googlecloud&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-58_passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-63_passing-brightgreen)
 
 </div>
 
@@ -269,16 +269,18 @@ reproducible without consuming model quota.
 | Metric | Result |
 | --- | --- |
 | Retrieval hit rate @4 | 100% (20/20) |
-| Mean reciprocal rank | 0.938 |
-| Refusal accuracy | 92.9% |
-| Refusal precision / recall | 92.3% / 92.3% |
-| Refusal F1 | 0.923 |
+| Mean reciprocal rank | 0.908 |
+| Context retrieved per question | 4,177 characters |
+| Content-free chunks retrieved | 0% |
+| Refusal accuracy | 94.6% |
+| Refusal precision / recall | 100% / 88.5% |
+| Refusal F1 | 0.939 |
 
 | Category | Result |
 | --- | --- |
-| On-topic questions answered | 20/20 |
+| On-topic questions answered | 19/20 |
 | Off-topic questions declined | 18/18 |
-| Adversarial near-misses declined | 8/10 |
+| Adversarial near-misses declined | 10/10 |
 | Off-topic mid-conversation declined | 2/2 |
 | Context-dependent follow-ups resolved | 4/6 |
 
@@ -288,21 +290,43 @@ The harness sweeps the relevance threshold and reports F1 at each value:
 
 | Threshold | Accuracy | Precision | Recall | F1 |
 | --- | --- | --- | --- | --- |
-| 0.80 | 94.6% | 100.0% | 88.5% | 0.939 |
-| 0.90 | 92.9% | 95.8% | 88.5% | 0.920 |
-| **0.95** | **92.9%** | **92.3%** | **92.3%** | **0.923** |
-| 1.15 | 85.7% | 78.1% | 96.2% | 0.862 |
-| 1.40 | 78.6% | 68.4% | 100.0% | 0.813 |
+| 0.85 | 89.3% | 100.0% | 76.9% | 0.870 |
+| 0.95 | 92.9% | 100.0% | 84.6% | 0.917 |
+| 1.02 | 94.6% | 100.0% | 88.5% | 0.939 |
+| **1.05** | **94.6%** | **100.0%** | **88.5%** | **0.939** |
+| 1.10 | 91.1% | 92.0% | 88.5% | 0.902 |
+| 1.40 | 85.7% | 78.1% | 96.2% | 0.862 |
 
-An initial threshold of 1.15 scored well against straightforward questions.
-Adding adversarial cases — for example "how do I raise awareness for my
-startup?" — reduced its F1 to 0.842 and motivated the sweep.
+1.02–1.05 is a plateau with no false positives; 1.05 is the last value before
+precision begins to fall, so it takes the most recall available at no cost to
+precision.
 
-Some overlap between classes is irreducible. The corpus contains neuroscience
-and AI papers, so "what is emotional intelligence in the workplace" (distance
-0.841) scores closer than the on-topic "what did Hameroff propose about
-microtubules" (0.926). The prompt retains its own refusal instruction as a
-second layer for these cases.
+The threshold is tied to chunk size. Larger chunks are semantically broader, so
+every distance grew when `chunk_size` moved from 500 to 1500, and the previously
+tuned 0.95 became too strict. Any change to chunking, the corpus, or the
+embedding model invalidates it.
+
+Roughly ±0.04 F1 of run-to-run variation comes from follow-up condensation,
+which is a language-model call and is not deterministic on a small model.
+
+### A retrieval bug this evaluation initially missed
+
+Hit rate reached 100% while the assistant was answering "there is not enough
+information" to on-topic questions. Both were true. Papers are stored as
+`Title: ...
+
+Abstract: ...`; the splitter breaks on the blank line first and
+then merges neighbours up to `chunk_size`, so at 500 characters a title could
+never merge with an abstract that alone exceeded the limit. Every paper left a
+stranded title-only chunk — 24% of the index carried no content, and being short
+they matched title-shaped queries strongly and displaced real material.
+
+Hit rate did not catch it because it checks whether the expected document was
+retrieved, which a title-only chunk satisfies perfectly. The metric was correct
+and uninformative. `mean_context_chars` and `thin_chunk_rate` were added to
+measure whether retrieved chunks carry usable content, and
+`tests/data/test_index_quality.py` fails the build if content-free chunks
+reappear.
 
 ## Performance
 
@@ -372,7 +396,7 @@ First-time project setup, teardown, and cost notes are documented in
 ## Development
 
 ```bash
-pytest                      # 58 tests
+pytest                      # 63 tests
 pytest -m "not slow"        # skip tests that load both embedding backends
 ruff check src/ tests/      # lint
 ```

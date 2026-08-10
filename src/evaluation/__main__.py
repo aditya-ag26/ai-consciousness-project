@@ -24,7 +24,7 @@ from src.evaluation.runner import (
 )
 from src.rag_pipeline.bot import QueryBot
 
-SWEEP_THRESHOLDS = [0.80, 0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15, 1.25, 1.40]
+SWEEP_THRESHOLDS = [0.85, 0.95, 1.00, 1.02, 1.05, 1.08, 1.10, 1.15, 1.25, 1.40]
 
 
 def parse_args() -> argparse.Namespace:
@@ -109,6 +109,9 @@ def _render(provider, threshold, dataset, groups, retrieval, guardrail, sweep, l
         f"  Hit rate @{config.rag_application.retrieval_k}        : {retrieval.hit_rate:.1%}  "
         f"({round(retrieval.hit_rate * retrieval.total)}/{retrieval.total} questions)",
         f"  Mean reciprocal rank: {retrieval.mean_reciprocal_rank:.3f}",
+        f"  Context per question: {retrieval.mean_context_chars:,.0f} chars",
+        f"  Thin chunks (<200ch): {retrieval.thin_chunk_rate:.1%}"
+        + ("   <-- retrieval is returning headings, not content" if retrieval.thin_chunk_rate > 0.1 else ""),
     ]
     if retrieval.misses:
         lines.append(f"  Missed ({len(retrieval.misses)}):")
@@ -179,6 +182,8 @@ def _as_dict(provider, threshold, retrieval, guardrail, sweep, latency) -> dict:
             "mean_reciprocal_rank": retrieval.mean_reciprocal_rank,
             "misses": retrieval.misses,
             "total": retrieval.total,
+            "mean_context_chars": retrieval.mean_context_chars,
+            "thin_chunk_rate": retrieval.thin_chunk_rate,
         },
         "guardrail": {
             "accuracy": guardrail.accuracy,

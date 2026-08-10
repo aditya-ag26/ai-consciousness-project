@@ -56,9 +56,22 @@ embedding_pipeline:
 
   # Model and text splitting parameters
   embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+
+  # A paper is stored as "Title: ...\n\nAbstract: ..." and abstracts are capped
+  # at max_abstract_len (1000) characters, so 1500 keeps each paper whole.
+  #
+  # This matters more than it looks. The splitter breaks on paragraph boundaries
+  # first, then merges neighbours up to chunk_size. At 500 a title could never
+  # merge with its own abstract, so every paper produced a stranded title-only
+  # chunk: 24% of the index carried no information, and because those chunks are
+  # short they matched title-shaped queries strongly and crowded out real
+  # content. Keeping a paper in one chunk removes the failure entirely.
+  #
+  # Transcripts are far longer and still split; the overlap scales with the
+  # chunk so a claim near a boundary still appears in both neighbours.
   text_splitter:
-    chunk_size: 500
-    chunk_overlap: 50
+    chunk_size: 1500
+    chunk_overlap: 150
 
 # Configuration for the RAG chatbot application
 rag_application:
@@ -97,15 +110,18 @@ rag_application:
   # Maximum FAISS L2 distance for a query to count as "in scope".
   #
   # Tuned by `python -m src.evaluation`, which sweeps this value over a labelled
-  # set of 56 cases. 0.95 maximises F1 (0.923); the earlier 1.15 scored 0.842 by
-  # admitting questions that merely borrow the corpus's vocabulary.
+  # set of 56 cases. 1.02-1.05 is a plateau at F1 0.939 with no false positives;
+  # 1.05 is the last value before precision starts falling, so it takes the most
+  # recall available at zero cost to precision.
   #
-  # Some overlap is irreducible: the corpus contains neuroscience and AI papers,
-  # so "what is emotional intelligence" (0.841) legitimately lands nearer than
-  # the on-topic "what did Hameroff propose about microtubules" (0.926). The
-  # prompt's own refusal instruction is the second line of defence for those.
-  # Re-run the evaluation after changing the corpus or the embedding model.
-  relevance_threshold: 0.95
+  # This value is tied to the chunking. Larger chunks are semantically broader,
+  # so every distance grew when chunk_size went from 500 to 1500 and the old
+  # 0.95 became too strict. Any change to chunk size, the corpus, or the
+  # embedding model invalidates it - re-run the evaluation.
+  #
+  # Run-to-run variation of roughly +/-0.04 F1 comes from follow-up condensation,
+  # which is a language-model call and is not deterministic on a small model.
+  relevance_threshold: 1.05
 
   # Number of prior conversation turns folded into the prompt.
   history_window: 3

@@ -29,6 +29,7 @@ data/**/*.csv
 # service URLs and account details, so it stays out of the public repository.
 NOTES-gcp-deployment.md
 NOTES-apis-and-http.md
+NOTES-rag-architecture.md
 
 # --- Editors / OS ---
 .vscode/
